@@ -1,0 +1,44 @@
+id = "klukacin.hub-worktrees"
+name = "Hub Worktrees"
+description = "Mirror a hub worktree into every nested sub-repo clone"
+version = "0.1.0"
+min_herdr_version = "0.7.5"
+platforms = ["macos", "linux"]
+
+# A new hub worktree starts as a bare hub checkout: the sub-repo clones are
+# git-ignored, so they are simply absent. Mirror them.
+[[events]]
+on = "worktree.created"
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" sync"]
+
+# Reopening a lane whose sub-repo worktrees were pruned heals it. Idempotent.
+[[events]]
+on = "worktree.opened"
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" sync"]
+
+# Herdr deletes the hub worktree directory, which leaves every sub-repo with a
+# stale worktree registration holding the lane branch. Prune them.
+[[events]]
+on = "worktree.removed"
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" prune"]
+
+[[actions]]
+id = "sync"
+title = "Sub-repo worktrees: create"
+description = "Add a worktree of every nested sub-repo clone to this hub worktree"
+contexts = ["workspace"]
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" sync"]
+
+[[actions]]
+id = "prune"
+title = "Sub-repo worktrees: remove"
+description = "Remove this lane's sub-repo worktrees; refuses the ones with uncommitted work"
+contexts = ["workspace"]
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" prune"]
+
+[[actions]]
+id = "prune-force"
+title = "Sub-repo worktrees: remove (discard changes)"
+description = "Remove this lane's sub-repo worktrees even when they hold uncommitted work"
+contexts = ["workspace"]
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" prune --force"]
