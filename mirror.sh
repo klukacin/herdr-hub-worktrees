@@ -89,8 +89,14 @@ do_sync() {
 	say "root: $root"
 	say "branch: $branch"
 
+	# The record is load-bearing: prune removes only what is listed here, so a
+	# record that cannot be written has to be reported, never swallowed.
 	fresh=$state.$$
-	printf 'root %s\nbranch %s\n' "$root" "$branch" > "$fresh"
+	if ! printf 'root %s\nbranch %s\n' "$root" "$branch" > "$fresh" 2>/dev/null; then
+		say "fail: cannot write lane record $state — teardown will not remove anything"
+		rm -f "$fresh" 2>/dev/null || true
+		fresh=/dev/null
+	fi
 
 	added=0 kept=0 failed=0
 	for d in "$root"/*/; do
@@ -116,7 +122,10 @@ do_sync() {
 		fi
 	done
 
-	mv "$fresh" "$state" 2>/dev/null || rm -f "$fresh"
+	if [ "$fresh" != /dev/null ] && ! mv "$fresh" "$state" 2>/dev/null; then
+		say "fail: cannot save lane record $state — reopen the worktree before removing it"
+		rm -f "$fresh" 2>/dev/null || true
+	fi
 	say "done: added=$added kept=$kept failed=$failed"
 	[ "$added" -gt 0 ] || [ "$kept" -gt 0 ] || say "note: no primary sub-repo clones under $root"
 }
@@ -135,6 +144,19 @@ do_prune() {
 	# delete the long-lived sub-repo worktrees that live beside the clones.
 	if [ "$lane" = "$root" ]; then
 		say "skip: that is the hub main checkout, not a lane: $root"
+		exit 0
+	fi
+
+	# The contract: this plugin removes only what it recorded. Without a record
+	# there is no verdict to make. This is what keeps a context that resolves to
+	# a CONTAINER of real checkouts — the hub main checkout, the lanes parent
+	# directory, any ancestor — from prefix-matching every worktree below it.
+	# Cost of the gate: a lane whose record was lost strands its sub-repo
+	# worktrees until it is reopened (sync rewrites the record). Recoverable,
+	# which mass deletion is not.
+	if [ ! -f "$state" ]; then
+		say "skip: no sync record for $lane — this plugin created nothing here"
+		say "note: reopen the worktree to re-record it, then remove again"
 		exit 0
 	fi
 
@@ -157,9 +179,9 @@ do_prune() {
 			"$lane"/*) ;;
 			*) continue ;;
 			esac
-			# When the sync record survives, it is the whitelist: a path this
-			# plugin did not create stays put.
-			if [ -f "$state" ] && ! grep -qxF "wt $p" "$state"; then
+			# The record is the whitelist: a checkout this plugin did not
+			# create stays put, even under force.
+			if ! grep -qxF "wt $p" "$state"; then
 				say "keep: $name $p not recorded for this lane"
 				foreign=$((foreign + 1))
 				continue

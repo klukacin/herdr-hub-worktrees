@@ -53,20 +53,29 @@ name when the hub worktree is detached. A sub-repo that already has that branch 
 somewhere is left alone (`keep:`), never re-pointed.
 
 State lives in `$HERDR_PLUGIN_STATE_DIR/lanes/<encoded lane path>`, recording the hub root and each
-path this plugin created. It is what makes pruning safe after Herdr has already deleted the lane
-directory, and it is deleted once the lane is fully cleaned up.
+path this plugin created. It is a precondition, not a bookkeeping nicety: `prune` removes nothing
+without it, which is what makes pruning safe after Herdr has already deleted the lane directory. It
+is deleted once the lane is fully cleaned up.
 
 ## Safety
 
-- **A lane is never the hub main checkout.** `sync` refuses a context that is not a linked
-  worktree; `prune` refuses one whose lane path equals the hub root. Without that second guard a
-  workspace with no worktree resolves to the hub root and the prune loop walks the *main* checkout,
-  where it would delete the long-lived sub-repo worktrees standing beside the clones.
+- **No record, no removal.** `prune` requires the lane's state file and otherwise reports `skip: no
+  sync record for … — this plugin created nothing here`. This is the guard that matters, because it
+  holds for every path that is not a lane: the hub main checkout, the lanes parent directory, `$HOME`
+  — any *container* of real checkouts. Without it, a context resolving to such a container makes the
+  prune loop prefix-match every sub-repo worktree below it and delete them all. Cost of the gate: a
+  lane whose record was lost strands its sub-repo worktrees until it is reopened (`sync` rewrites the
+  record). Recoverable, which mass deletion is not.
+- **The hub main checkout is named explicitly.** A workspace with no worktree resolves the lane to
+  the hub root; `prune` reports `skip: that is the hub main checkout, not a lane`. `sync` likewise
+  refuses a context that is not a linked worktree.
 - **A lane must belong to this hub.** `sync` compares `git rev-parse --git-common-dir` of the lane
   against `<hub root>/.git`, so a foreign repository never receives this hub's sub-repos.
-- **Only recorded paths are removed.** When the state file survives, it is the whitelist: a
-  checkout inside the lane directory that this plugin did not create is reported `keep: … not
-  recorded for this lane` and left in place.
+- **Only recorded paths are removed.** The state file is a whitelist, not just a gate: a checkout
+  inside the lane directory that this plugin did not create is reported `keep: … not recorded for
+  this lane` and left in place, force or not.
+- **A record that cannot be written is reported.** `sync` says `fail: cannot write lane record …` and
+  never pretends the lane was tracked.
 - **Uncommitted work wins.** Plain `prune` reports `keep: … has uncommitted work` and returns
   success; only the explicit force action discards it.
 - **Branches are never deleted**, exactly like Herdr leaves the hub lane branch behind.
