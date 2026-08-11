@@ -22,6 +22,15 @@ command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" sync"]
 on = "worktree.removed"
 command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" prune"]
 
+# Herdr fires worktree.removed only after the lane directory is already gone,
+# so no hook can refuse a removal. This report is the pre-close look.
+[[actions]]
+id = "status"
+title = "Sub-repo worktrees: status"
+description = "Report uncommitted and unpushed work parked in this lane's sub-repo worktrees"
+contexts = ["workspace"]
+command = ["/bin/sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/mirror.sh\" status"]
+
 [[actions]]
 id = "sync"
 title = "Sub-repo worktrees: create"

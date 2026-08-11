@@ -44,6 +44,7 @@ Workspace actions, manual (right-click a workspace):
 
 |Action|Result|
 |---|---|
+|Sub-repo worktrees: status|read-only report of uncommitted and unpushed work parked in this lane|
 |Sub-repo worktrees: create|the `sync` pass, on demand|
 |Sub-repo worktrees: remove|prunes the lane's sub-repo worktrees, refusing any with uncommitted work|
 |Sub-repo worktrees: remove (discard changes)|the same with `--force`|
@@ -56,6 +57,15 @@ State lives in `$HERDR_PLUGIN_STATE_DIR/lanes/<encoded lane path>`, recording th
 path this plugin created. It is a precondition, not a bookkeeping nicety: `prune` removes nothing
 without it, which is what makes pruning safe after Herdr has already deleted the lane directory. It
 is deleted once the lane is fully cleaned up.
+
+## Before you close a lane
+
+Run **Sub-repo worktrees: status**. Closing a lane deletes its sub-repo checkouts along with the
+directory, and Herdr will not warn you, because the hub `.gitignore` hides those directories: a
+lane holding hours of uncommitted sub-repo work still reports clean, so `worktree remove` succeeds
+without `--force`. Measured on a scratch hub: the lane branch and every commit on it survived in
+each sub-repo; a modified tracked file reverted to its last commit; an untracked file was gone for
+good. Hooks cannot prevent this — `worktree.removed` fires *after* the directory is deleted.
 
 ## Safety
 

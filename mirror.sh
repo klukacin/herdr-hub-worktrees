@@ -3,6 +3,7 @@
 #
 #   mirror.sh sync            worktree.created / worktree.opened / action "sync"
 #   mirror.sh prune [--force] worktree.removed / action "prune" / "prune-force"
+#   mirror.sh status          action "status" — read-only, before you close a lane
 #
 # Context arrives through the environment, never argv:
 #   HERDR_PLUGIN_EVENT_JSON    event envelope   (event hooks)
@@ -43,6 +44,24 @@ if [ -z "$lane" ] && [ -n "$ctx" ]; then
 fi
 
 [ -n "$lane" ] || { say "skip: no worktree in context"; exit 0; }
+
+# Git reports physical paths (/private/tmp/…), Herdr passes the path the user
+# typed (/tmp/…). Compare and record physical paths only, or a hub reached
+# through a symlink never matches its own worktrees. The leaf may already be
+# deleted when prune runs, so resolve the deepest existing ancestor and keep
+# the tail — the state key has to stay identical across sync and prune.
+physical() {
+	p=$1 tail=
+	while [ -n "$p" ] && [ "$p" != / ] && [ ! -d "$p" ]; do
+		tail=$(basename "$p")${tail:+/$tail}
+		p=$(dirname "$p")
+	done
+	p=$(cd "$p" 2>/dev/null && pwd -P) || { printf '%s' "$1"; return; }
+	printf '%s' "$p${tail:+/$tail}"
+}
+
+lane=$(physical "$lane")
+[ -z "$root" ] || root=$(physical "$root")
 
 state_dir=${HERDR_PLUGIN_STATE_DIR:-${TMPDIR:-/tmp}/herdr-hub-worktrees}
 mkdir -p "$state_dir/lanes" 2>/dev/null || true
@@ -225,11 +244,80 @@ do_prune() {
 	say "note: lane branches are left in place, exactly like Herdr leaves the hub branch"
 }
 
+# Hooks always arrive too late: Herdr deletes the lane directory first and only
+# then fires `worktree.removed`. Nothing this plugin can register will stop a
+# removal, and the hub's .gitignore hides the sub-repo checkouts from git, so
+# `worktree remove` without --force sees a clean lane and proceeds. This report
+# is the only pre-close look at what a lane is holding.
+do_status() {
+	[ -n "$root" ] || { say "fail: no hub repo_root in context for $lane"; exit 1; }
+	[ "$root" != "$lane" ] || { say "skip: that is the hub main checkout, not a lane"; exit 0; }
+
+	subs=0 checkouts=0 files=0 unpushed=0
+	say "lane: $lane"
+	for d in "$root"/*/; do
+		[ -d "$d" ] || continue
+		sub=${d%/}
+		name=$(basename "$sub")
+		is_primary "$sub" || continue
+		subs=$((subs + 1))
+
+		git -C "$sub" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' |
+			while IFS= read -r p; do
+				case $p in
+				"$lane"/*) ;;
+				*) continue ;;
+				esac
+				[ -d "$p" ] || { say "$name: checkout is gone: $p"; continue; }
+
+				dirty=$(git -C "$p" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+				br=$(git -C "$p" symbolic-ref --quiet --short HEAD 2>/dev/null || echo '(detached)')
+				up=$(git -C "$p" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+				if [ -n "$up" ]; then
+					ahead=$(git -C "$p" rev-list --count "$up"..HEAD 2>/dev/null || echo '?')
+					where="$ahead ahead of $up"
+				else
+					where='no upstream, local only'
+				fi
+				if [ -f "$state" ] && grep -qxF "wt $p" "$state"; then own=mine; else own=foreign; fi
+				say "$name: $br — $dirty uncommitted, $where [$own]"
+				# The subshell of a pipeline cannot raise the outer counters,
+				# so the tallies are recomputed below from the same walk.
+			done
+	done
+
+	checkouts=$(
+		for d in "$root"/*/; do
+			sub=${d%/}
+			is_primary "$sub" || continue
+			git -C "$sub" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p'
+		done | grep -c "^$lane/" || true
+	)
+	files=$(
+		for d in "$root"/*/; do
+			sub=${d%/}
+			is_primary "$sub" || continue
+			git -C "$sub" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p'
+		done | grep "^$lane/" | while IFS= read -r p; do
+			[ -d "$p" ] && git -C "$p" status --porcelain 2>/dev/null
+		done | wc -l | tr -d ' '
+	)
+
+	say "status: subrepos=$subs checkouts=$checkouts uncommitted_files=$files"
+	if [ "${files:-0}" -gt 0 ]; then
+		say "warning: closing this lane deletes those $files files. Herdr will not"
+		say "warning: refuse, because the hub ignores the sub-repo directories and"
+		say "warning: therefore reports the lane as clean. Commit or stash first."
+	fi
+	say "note: committed work always survives on the lane branch in each sub-repo"
+}
+
 case $mode in
 sync) do_sync ;;
 prune) do_prune ;;
+status) do_status ;;
 *)
-	say "fail: unknown mode '$mode' (sync|prune)"
+	say "fail: unknown mode '$mode' (sync|prune|status)"
 	exit 1
 	;;
 esac
