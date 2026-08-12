@@ -24,11 +24,16 @@ goes.
 Requires Herdr 0.7.5 or newer.
 
 ```sh
+herdr plugin install klukacin/herdr-hub-worktrees
+```
+
+To hack on it locally, clone and link the working directory instead:
+
+```sh
 herdr plugin link /path/to/herdr-hub-worktrees
 ```
 
-`git`, `jq`, and Herdr 0.7.5+ are the only requirements. Publish the directory as a GitHub repo
-tagged `herdr-plugin` to install it with `herdr plugin install <owner>/<repo>` instead.
+`git`, `jq`, and Herdr 0.7.5+ are the only requirements.
 
 ## What it does
 
